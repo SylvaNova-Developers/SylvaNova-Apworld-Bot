@@ -28,11 +28,20 @@ commands; the notes below only cover non-obvious cloud specifics.
 ### Running the bot
 
 - Requires `DISCORD_TOKEN`, `DISCORD_GUILD_ID`, and `GITHUB_TOKEN` (see `.env.example`).
-  Without them the process fails fast with a clear `RuntimeError`.
+  Without them the process fails fast with a clear `RuntimeError`. Copy them into a
+  gitignored `.env` (`cp .env.example .env`) — `python-dotenv` loads it automatically.
 - Non-obvious gotcha: `IndexPullRequestClient` calls the GitHub `get_repo` API inside
   `ApworldBot.__init__`, so an invalid/missing `GITHUB_TOKEN` raises a `401 Bad credentials`
   error at startup — *before* the Discord login is ever attempted. Provide a valid GitHub
   token when debugging Discord connectivity.
+- Non-obvious gotcha: after Discord login succeeds, `setup_hook` syncs slash commands to
+  `DISCORD_GUILD_ID`. If the bot is not a member of that guild you get
+  `403 Forbidden (error code: 50001): Missing Access` and the process exits. Invite the
+  bot with scopes `bot` + `applications.commands` (client id = the bot's application id):
+  `https://discord.com/api/oauth2/authorize?client_id=<APPLICATION_ID>&permissions=0&scope=bot%20applications.commands`
+- Start locally: `PYTHONPATH=src .venv/bin/python -m sylvanova_apworld_bot` (or
+  `docker compose up -d --build`). Success looks like `Synced slash commands to guild …`
+  followed by the discord.py ready/login lines; the process then stays running.
 
 ### Testing core functionality without credentials
 
