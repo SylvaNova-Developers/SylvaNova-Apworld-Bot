@@ -51,18 +51,38 @@ token) with `contents:write` and `pull_requests:write` on the index repo.
 
 ### Docker (recommended)
 
+Install Docker Engine + Compose plugin (AlmaLinux / RHEL-like):
+
+```bash
+sudo dnf install -y dnf-plugins-core
+sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"
+# log out and back in (or newgrp docker) so group membership applies
+```
+
+Configure `.env`, then build and start detached. Compose uses `restart: unless-stopped`, so the bot comes back after reboot as long as Docker itself is enabled:
+
 ```bash
 docker compose up -d --build
 docker compose logs -f bot
 ```
 
-Or without Compose:
+Useful commands:
+
+```bash
+docker compose ps
+docker compose restart
+docker compose down
+```
+
+Or without Compose (also restart on boot):
 
 ```bash
 docker build -t sylvanova-apworld-bot .
-docker run --rm --env-file .env --name sylvanova-apworld-bot sylvanova-apworld-bot
+docker run -d --restart unless-stopped --env-file .env --name sylvanova-apworld-bot sylvanova-apworld-bot
 ```
-
 ### Local (venv)
 
 ```bash
