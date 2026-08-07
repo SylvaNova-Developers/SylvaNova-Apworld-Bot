@@ -41,23 +41,40 @@ gh repo create chouticly/SylvaNova-apworld-bot --public --source=discord-bot --r
 ## Setup
 
 ```bash
-cd discord-bot
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
 cp .env.example .env
 # fill DISCORD_TOKEN, DISCORD_GUILD_ID, GITHUB_TOKEN
-PYTHONPATH=src python -m sylvanova_apworld_bot
 ```
 
 Create a Discord application → Bot → enable `applications.commands`, invite the
 bot with `applications.commands` + `bot` scopes. Create a GitHub PAT (or fine-grained
 token) with `contents:write` and `pull_requests:write` on the index repo.
 
+### Docker (recommended)
+
+```bash
+docker compose up -d --build
+docker compose logs -f bot
+```
+
+Or without Compose:
+
+```bash
+docker build -t sylvanova-apworld-bot .
+docker run --rm --env-file .env --name sylvanova-apworld-bot sylvanova-apworld-bot
+```
+
+### Local (venv)
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+PYTHONPATH=src python -m sylvanova_apworld_bot
+```
+
 ## Tests
 
 ```bash
-cd discord-bot
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 

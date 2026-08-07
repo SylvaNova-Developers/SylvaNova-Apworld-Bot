@@ -1,0 +1,9 @@
+services:
+  bot:
+    build: .
+    image: sylvanova-apworld-bot:latest
+    container_name: sylvanova-apworld-bot
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
