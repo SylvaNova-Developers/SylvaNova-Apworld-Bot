@@ -91,7 +91,7 @@ class ConfirmRequestView(discord.ui.View):
 		interaction: discord.Interaction,
 		button: discord.ui.Button,
 	) -> None:
-		await interaction.response.defer(ephemeral=True, thinking=True)
+		await interaction.response.defer(thinking=True)
 		self._disable_children()
 		try:
 			if self.message is not None:
@@ -109,14 +109,13 @@ class ConfirmRequestView(discord.ui.View):
 			)
 		except Exception as exc:  # noqa: BLE001 - surface to Discord user
 			log.exception("confirm open_apworld_pr failed")
-			await interaction.followup.send(f"Failed to open PR: {exc}", ephemeral=True)
+			await interaction.followup.send(f"Failed to open PR: {exc}")
 			self.stop()
 			return
 
 		await interaction.followup.send(
 			f"Opened PR #{pr.number}: {pr.url}\n"
 			"Index CI will validate, fuzz, and auto-merge when green.",
-			ephemeral=True,
 		)
 		if self.message is not None:
 			try:
@@ -182,7 +181,7 @@ def build_bot(settings: Settings) -> ApworldBot:
 		interaction: discord.Interaction,
 		url: str,
 	) -> None:
-		await interaction.response.defer(ephemeral=True, thinking=True)
+		await interaction.response.defer(thinking=True)
 		try:
 			world = await asyncio.to_thread(
 				discover_from_release_url,
@@ -190,7 +189,7 @@ def build_bot(settings: Settings) -> ApworldBot:
 				max_bytes=bot.settings.apworld_max_bytes,
 			)
 			if bot.github.apworld_exists(world.apworld_id):
-				await interaction.followup.send(_ALREADY_HOSTED, ephemeral=True)
+				await interaction.followup.send(_ALREADY_HOSTED)
 				return
 
 			toml_body = render_discovered_toml(world)
@@ -205,15 +204,14 @@ def build_bot(settings: Settings) -> ApworldBot:
 			message = await interaction.followup.send(
 				embed=_preview_embed(world, toml_body),
 				view=view,
-				ephemeral=True,
 				wait=True,
 			)
 			view.message = message
 		except DiscoveryError as exc:
-			await interaction.followup.send(f"Could not discover apworld: {exc}", ephemeral=True)
+			await interaction.followup.send(f"Could not discover apworld: {exc}")
 		except Exception as exc:  # noqa: BLE001 - surface to Discord user
 			log.exception("request-apworld failed")
-			await interaction.followup.send(f"Failed: {exc}", ephemeral=True)
+			await interaction.followup.send(f"Failed: {exc}")
 
 	return bot
 
