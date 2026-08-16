@@ -9,13 +9,19 @@ from discord import app_commands
 from .config import Settings, load_settings
 from .discover import DiscoveredWorld, DiscoveryError, discover_from_release_url
 from .github_pr import IndexPullRequestClient
-from .toml_template import render_discovered_toml
+from .toml_template import (
+	TomlMergeError,
+	merge_discovered_version,
+	parse_index_world_toml,
+	render_discovered_toml,
+)
 
 log = logging.getLogger("sylvanova_apworld_bot")
 
-_ALREADY_HOSTED = (
-	"This apworld is already hosted in the SylvaNova index. "
-	"Chou or Virunas can add or update versions for worlds that are already listed."
+_VERSION_ALREADY_HOSTED = (
+	"Version `{version}` of `{apworld}` is already in the SylvaNova index. "
+	"Manual_* entries are separate worlds and do not block non-manual apworld ids. "
+	"Chou or Virunas can help if you need something else changed."
 )
 
 _CONFIRM_TIMEOUT_SECONDS = 600
@@ -50,6 +56,7 @@ class ConfirmRequestView(discord.ui.View):
 		toml_body: str,
 		github: IndexPullRequestClient,
 		requested_by: str,
+		is_update: bool,
 	):
 		super().__init__(timeout=_CONFIRM_TIMEOUT_SECONDS)
 		self.requester_id = requester_id
@@ -57,6 +64,7 @@ class ConfirmRequestView(discord.ui.View):
 		self.toml_body = toml_body
 		self.github = github
 		self.requested_by = requested_by
+		self.is_update = is_update
 		self.message: discord.WebhookMessage | discord.Message | None = None
 
 	async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -106,6 +114,7 @@ class ConfirmRequestView(discord.ui.View):
 				toml_body=self.toml_body,
 				requested_by=self.requested_by,
 				world=self.world,
+				is_update=self.is_update,
 			)
 		except Exception as exc:  # noqa: BLE001 - surface to Discord user
 			log.exception("confirm open_apworld_pr failed")
@@ -143,18 +152,26 @@ class ConfirmRequestView(discord.ui.View):
 		self.stop()
 
 
-def _preview_embed(world: DiscoveredWorld, toml_body: str) -> discord.Embed:
+def _preview_embed(world: DiscoveredWorld, toml_body: str, *, is_update: bool) -> discord.Embed:
 	url_label = "default_url" if world.uses_default_url else "url"
-	embed = discord.Embed(
-		title="Confirm apworld index PR",
-		description=(
+	title = "Confirm apworld index update" if is_update else "Confirm apworld index PR"
+	description = (
+		"This apworld id is already in the index. Review the proposed version update, "
+		"then confirm to open a PR. Manual_* entries are separate and do not block this."
+		if is_update
+		else (
 			"Review the auto-discovered metadata. "
 			"Confirm to open an add-only PR on the SylvaNova index."
-		),
+		)
+	)
+	embed = discord.Embed(
+		title=title,
+		description=description,
 		color=discord.Color.blurple(),
 	)
 	embed.add_field(name="apworld id", value=f"`{world.apworld_id}`", inline=True)
 	embed.add_field(name="version", value=f"`{world.version}`", inline=True)
+	embed.add_field(name="mode", value="update existing" if is_update else "add new", inline=True)
 	embed.add_field(name="game name", value=world.name, inline=False)
 	if world.display_name:
 		embed.add_field(name="display_name", value=world.display_name, inline=False)
@@ -188,11 +205,26 @@ def build_bot(settings: Settings) -> ApworldBot:
 				url.strip(),
 				max_bytes=bot.settings.apworld_max_bytes,
 			)
-			if bot.github.apworld_exists(world.apworld_id):
-				await interaction.followup.send(_ALREADY_HOSTED)
-				return
+			existing_file = await asyncio.to_thread(
+				bot.github.get_apworld_toml,
+				world.apworld_id,
+			)
+			is_update = False
+			if existing_file is None:
+				toml_body = render_discovered_toml(world)
+			else:
+				existing = parse_index_world_toml(existing_file.content)
+				if world.version in existing.versions:
+					await interaction.followup.send(
+						_VERSION_ALREADY_HOSTED.format(
+							version=world.version,
+							apworld=world.apworld_id,
+						)
+					)
+					return
+				toml_body = merge_discovered_version(existing, world)
+				is_update = True
 
-			toml_body = render_discovered_toml(world)
 			requested_by = interaction.user.name if interaction.user else "unknown"
 			view = ConfirmRequestView(
 				requester_id=interaction.user.id,
@@ -200,14 +232,15 @@ def build_bot(settings: Settings) -> ApworldBot:
 				toml_body=toml_body,
 				github=bot.github,
 				requested_by=requested_by,
+				is_update=is_update,
 			)
 			message = await interaction.followup.send(
-				embed=_preview_embed(world, toml_body),
+				embed=_preview_embed(world, toml_body, is_update=is_update),
 				view=view,
 				wait=True,
 			)
 			view.message = message
-		except DiscoveryError as exc:
+		except (DiscoveryError, TomlMergeError) as exc:
 			await interaction.followup.send(f"Could not discover apworld: {exc}")
 		except Exception as exc:  # noqa: BLE001 - surface to Discord user
 			log.exception("request-apworld failed")

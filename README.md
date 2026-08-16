@@ -21,10 +21,14 @@ Example:
 Flow:
 
 1. Bot downloads the asset and auto-discovers apworld id, game name, version, and home.
-2. If `index/{apworld}.toml` already exists, it tells the user that **Chou or Virunas**
-   can add or update worlds that are already hosted (no PR).
-3. Otherwise it shows a preview (metadata + proposed TOML) with **Confirm** / **Cancel**.
-4. On Confirm, it opens an add-only PR. Index CI validates, fuzzes, and auto-merges when green.
+2. If `index/{apworld}.toml` already exists:
+   - Same version already listed → declines (that release is already hosted).
+   - New version → shows an **update** preview that merges the version into the
+     existing entry (and clears `disabled` if set). Manual_* index entries are
+     separate worlds and never block a non-manual apworld id.
+3. Otherwise it shows an **add** preview (metadata + proposed TOML).
+4. On Confirm, it opens an add or update PR. Index CI validates, fuzzes, and
+   auto-merges when green.
 
 Only direct release **asset** links are accepted (not the release page URL).
 
