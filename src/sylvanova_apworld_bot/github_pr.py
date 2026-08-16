@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -66,7 +67,7 @@ class IndexPullRequestClient:
 
 		base_ref = self._repo.get_git_ref(f"heads/{self._base_branch}")
 		base_sha = base_ref.object.sha
-		branch = f"{self._branch_prefix}{apworld}"
+		branch = self._branch_name(apworld, world=world, is_update=is_update)
 		self._ensure_branch(branch, base_sha, wipe_index_file=not is_update)
 
 		if is_update:
@@ -145,6 +146,20 @@ class IndexPullRequestClient:
 			]
 		)
 		return "\n".join(lines)
+
+	def _branch_name(
+		self,
+		apworld: str,
+		*,
+		world: DiscoveredWorld | None,
+		is_update: bool,
+	) -> str:
+		if is_update:
+			if world is None:
+				raise RuntimeError("world is required for update PRs")
+			safe_version = re.sub(r"[^a-zA-Z0-9._/-]", "-", world.version)
+			return f"{self._branch_prefix}{apworld}-{safe_version}"
+		return f"{self._branch_prefix}{apworld}"
 
 	def _path_exists_on_base(self, path: str) -> bool:
 		try:

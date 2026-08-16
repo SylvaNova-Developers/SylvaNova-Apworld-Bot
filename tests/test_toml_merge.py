@@ -87,6 +87,7 @@ disabled = true
 			merged,
 		)
 		self.assertIn('"0.3.37" = {}', merged)
+		self.assertIn('home = "https://discord.com/channels/example"', merged)
 		self.assertNotIn("disabled", merged)
 
 	def test_rejects_duplicate_version(self) -> None:

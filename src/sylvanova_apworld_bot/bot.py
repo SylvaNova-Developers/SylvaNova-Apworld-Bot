@@ -108,14 +108,42 @@ class ConfirmRequestView(discord.ui.View):
 			pass
 
 		try:
+			toml_body = self.toml_body
+			if self.is_update:
+				existing_file = await asyncio.to_thread(
+					self.github.get_apworld_toml,
+					self.world.apworld_id,
+				)
+				if existing_file is None:
+					await interaction.followup.send(
+						f"`{self.world.apworld_id}` is no longer in the index. "
+						"Run `/request-apworld` again."
+					)
+					self.stop()
+					return
+				existing = parse_index_world_toml(existing_file.content)
+				if self.world.version in existing.versions:
+					await interaction.followup.send(
+						_VERSION_ALREADY_HOSTED.format(
+							version=self.world.version,
+							apworld=self.world.apworld_id,
+						)
+					)
+					self.stop()
+					return
+				toml_body = merge_discovered_version(existing, self.world)
 			pr = await asyncio.to_thread(
 				self.github.open_apworld_pr,
 				apworld=self.world.apworld_id,
-				toml_body=self.toml_body,
+				toml_body=toml_body,
 				requested_by=self.requested_by,
 				world=self.world,
 				is_update=self.is_update,
 			)
+		except TomlMergeError as exc:
+			await interaction.followup.send(f"Could not update apworld index entry: {exc}")
+			self.stop()
+			return
 		except Exception as exc:  # noqa: BLE001 - surface to Discord user
 			log.exception("confirm open_apworld_pr failed")
 			await interaction.followup.send(f"Failed to open PR: {exc}")
@@ -240,8 +268,10 @@ def build_bot(settings: Settings) -> ApworldBot:
 				wait=True,
 			)
 			view.message = message
-		except (DiscoveryError, TomlMergeError) as exc:
+		except DiscoveryError as exc:
 			await interaction.followup.send(f"Could not discover apworld: {exc}")
+		except TomlMergeError as exc:
+			await interaction.followup.send(f"Could not update apworld index entry: {exc}")
 		except Exception as exc:  # noqa: BLE001 - surface to Discord user
 			log.exception("request-apworld failed")
 			await interaction.followup.send(f"Failed: {exc}")

@@ -151,7 +151,7 @@ def merge_discovered_version(existing: ExistingIndexWorld, world: DiscoveredWorl
 
 	name = world.name or existing.name
 	display_name = world.display_name if world.display_name is not None else existing.display_name
-	home = world.home or existing.home
+	home = existing.home or world.home
 
 	effective_default = (
 		world.url_or_template if world.uses_default_url else existing.default_url
