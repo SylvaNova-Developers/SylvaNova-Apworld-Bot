@@ -1,7 +1,7 @@
 # SylvaNova apworld request bot
 
 Discord bot that turns a **GitHub release `.apworld` download link** into an add-only
-PR on [`chouticly/SylvaNova-archipelago-index`](https://github.com/chouticly/SylvaNova-archipelago-index).
+PR on [`SylvaNova-Developers/SylvaNova-Archipelago-Index`](https://github.com/SylvaNova-Developers/SylvaNova-Archipelago-Index).
 
 Fuzz / validate / auto-merge stay in the index repo's `PR CI` workflow; this bot
 only discovers metadata and opens the PR.
@@ -37,7 +37,7 @@ Only direct release **asset** links are accepted (not the release page URL).
 This directory is portable. When you are ready:
 
 ```bash
-gh repo create chouticly/SylvaNova-apworld-bot --public --source=discord-bot --remote=origin --push
+gh repo create SylvaNova-Developers/SylvaNova-Apworld-Bot --public --source=discord-bot --remote=origin --push
 ```
 
 (or copy `discord-bot/` to a new checkout and push)

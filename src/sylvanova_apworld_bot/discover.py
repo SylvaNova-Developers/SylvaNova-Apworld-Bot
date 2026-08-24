@@ -35,7 +35,7 @@ _SEMVER_CORE = re.compile(
 )
 
 _DEFAULT_MAX_BYTES = 50 * 1024 * 1024
-_USER_AGENT = "SylvaNova-apworld-bot/0.1 (+https://github.com/chouticly/SylvaNova-archipelago-index)"
+_USER_AGENT = "SylvaNova-apworld-bot/0.1 (+https://github.com/SylvaNova-Developers/SylvaNova-Archipelago-Index)"
 
 
 @dataclass(frozen=True)
