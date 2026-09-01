@@ -147,6 +147,36 @@ class ArchiveDiscoveryTests(unittest.TestCase):
 		toml = render_discovered_toml(world)
 		self.assertIn('display_name = "Manual: Demo"', toml)
 
+	def test_resolves_game_from_string_constant(self) -> None:
+		buffer = io.BytesIO()
+		with zipfile.ZipFile(buffer, "w") as archive:
+			archive.writestr(
+				"mina_the_hollower/__init__.py",
+				"from .constants import MINA_THE_HOLLOWER\n\n"
+				"class MinaTheHollowerWorld:\n"
+				"\tgame = MINA_THE_HOLLOWER\n",
+			)
+			archive.writestr(
+				"mina_the_hollower/constants.py",
+				'MINA_THE_HOLLOWER = "Mina The Hollower"\n',
+			)
+		payload = buffer.getvalue()
+		self.assertEqual(
+			extract_game_name(payload, "mina_the_hollower"),
+			"Mina The Hollower",
+		)
+
+	def test_falls_back_to_archipelago_manifest(self) -> None:
+		buffer = io.BytesIO()
+		with zipfile.ZipFile(buffer, "w") as archive:
+			archive.writestr("demo/__init__.py", "class DemoWorld:\n\tpass\n")
+			archive.writestr(
+				"demo/archipelago.json",
+				'{"game": "Demo From Manifest", "world_version": "1.0.0"}\n',
+			)
+		payload = buffer.getvalue()
+		self.assertEqual(extract_game_name(payload, "demo"), "Demo From Manifest")
+
 
 if __name__ == "__main__":
 	unittest.main()
