@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import re
 import zipfile
 from dataclasses import dataclass
@@ -22,6 +23,11 @@ _RELEASE_ASSET = re.compile(
 
 _GAME_ASSIGNMENT = re.compile(
 	r"^\s*game\s*=\s*(?:['\"]([^'\"]+)['\"]|([A-Za-z_][A-Za-z0-9_]*))",
+	re.MULTILINE,
+)
+
+_STRING_CONST = re.compile(
+	r"^\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*['\"](?P<value>[^'\"]+)['\"]",
 	re.MULTILINE,
 )
 
@@ -145,6 +151,46 @@ def extract_apworld_id(archive_bytes: bytes) -> str:
 	return validate_apworld_id(candidates[0].lower())
 
 
+def _build_string_constants(texts: list[str]) -> dict[str, str]:
+	constants: dict[str, str] = {}
+	for text in texts:
+		for match in _STRING_CONST.finditer(text):
+			constants[match.group("name")] = match.group("value")
+	return constants
+
+
+def _resolve_game_assignment(
+	text: str,
+	constants: dict[str, str],
+) -> list[str]:
+	names: list[str] = []
+	for match in _GAME_ASSIGNMENT.finditer(text):
+		literal = match.group(1)
+		if literal is not None:
+			names.append(literal)
+			continue
+		identifier = match.group(2)
+		if identifier and identifier in constants:
+			names.append(constants[identifier])
+	return names
+
+
+def _extract_game_from_manifest(archive: zipfile.ZipFile, apworld_id: str) -> str | None:
+	manifest_path = f"{apworld_id}/archipelago.json"
+	try:
+		raw = archive.read(manifest_path)
+	except KeyError:
+		return None
+	try:
+		data = json.loads(raw.decode("utf-8"))
+	except (json.JSONDecodeError, UnicodeDecodeError):
+		return None
+	game = data.get("game")
+	if isinstance(game, str) and game.strip():
+		return game.strip()
+	return None
+
+
 def extract_game_name(archive_bytes: bytes, apworld_id: str) -> str:
 	with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
 		py_members = [
@@ -154,6 +200,12 @@ def extract_game_name(archive_bytes: bytes, apworld_id: str) -> str:
 		]
 		if not py_members:
 			raise DiscoveryError("Apworld contains no Python files to discover `game = ...`.")
+
+		py_sources = {
+			info.filename: archive.read(info).decode("utf-8", errors="replace")
+			for info in py_members
+		}
+		constants = _build_string_constants(list(py_sources.values()))
 
 		preferred = f"{apworld_id}/__init__.py"
 		ordered = sorted(
@@ -167,14 +219,13 @@ def extract_game_name(archive_bytes: bytes, apworld_id: str) -> str:
 
 		found: list[tuple[str, str]] = []
 		for info in ordered:
-			text = archive.read(info).decode("utf-8", errors="replace")
-			for match in _GAME_ASSIGNMENT.finditer(text):
-				literal = match.group(1)
-				if literal is None:
-					continue
-				found.append((info.filename, literal))
+			for name in _resolve_game_assignment(py_sources[info.filename], constants):
+				found.append((info.filename, name))
 
 		if not found:
+			manifest_game = _extract_game_from_manifest(archive, apworld_id)
+			if manifest_game is not None:
+				return manifest_game
 			raise DiscoveryError(
 				"Could not find a string `game = \"...\"` assignment in the apworld. "
 				"Ask Chou or Virunas to add it manually."
