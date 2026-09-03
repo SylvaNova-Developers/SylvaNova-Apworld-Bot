@@ -191,8 +191,40 @@ def _extract_game_from_manifest(archive: zipfile.ZipFile, apworld_id: str) -> st
 	return None
 
 
+def _extract_game_from_manual_data(archive: zipfile.ZipFile, apworld_id: str) -> str | None:
+	"""Build Manual_{game}_{author} from ManualForArchipelago data/game.json."""
+	manual_path = f"{apworld_id}/data/game.json"
+	try:
+		raw = archive.read(manual_path)
+	except KeyError:
+		return None
+	try:
+		data = json.loads(raw.decode("utf-8"))
+	except (json.JSONDecodeError, UnicodeDecodeError):
+		return None
+	if not isinstance(data, dict):
+		return None
+
+	game = data.get("game")
+	if not isinstance(game, str) or not game.strip():
+		return None
+
+	# Manual Game.py maps creator → player when present; prefer creator.
+	author = data.get("creator")
+	if not isinstance(author, str) or not author.strip():
+		author = data.get("player")
+	if not isinstance(author, str) or not author.strip():
+		return None
+
+	return f"Manual_{game.strip()}_{author.strip()}"
+
+
 def extract_game_name(archive_bytes: bytes, apworld_id: str) -> str:
 	with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+		manual_game = _extract_game_from_manual_data(archive, apworld_id)
+		if manual_game is not None:
+			return manual_game
+
 		py_members = [
 			info
 			for info in archive.infolist()

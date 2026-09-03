@@ -177,6 +177,72 @@ class ArchiveDiscoveryTests(unittest.TestCase):
 		payload = buffer.getvalue()
 		self.assertEqual(extract_game_name(payload, "demo"), "Demo From Manifest")
 
+	def test_manual_data_game_json_overrides_placeholders(self) -> None:
+		buffer = io.BytesIO()
+		with zipfile.ZipFile(buffer, "w") as archive:
+			archive.writestr(
+				"manual_readbooks_roobyroo/data/game.json",
+				'{"game": "ReadBooks", "creator": "RoobyRoo"}\n',
+			)
+			archive.writestr(
+				"manual_readbooks_roobyroo/Game.py",
+				'game_name = "Manual_%s_%s" % (game_table["game"], game_table["player"])\n',
+			)
+			archive.writestr(
+				"manual_readbooks_roobyroo/Items.py",
+				'game = "Manual"\n',
+			)
+			archive.writestr(
+				"manual_readbooks_roobyroo/ManualClient.py",
+				'game = "not set"\n',
+			)
+			archive.writestr(
+				"manual_readbooks_roobyroo/manual_test.py",
+				"game = game_name\n",
+			)
+			archive.writestr(
+				"manual_readbooks_roobyroo/__init__.py",
+				"class ManualWorld:\n\tpass\n",
+			)
+		payload = buffer.getvalue()
+		self.assertEqual(
+			extract_game_name(payload, "manual_readbooks_roobyroo"),
+			"Manual_ReadBooks_RoobyRoo",
+		)
+
+	def test_manual_data_game_json_full_discover(self) -> None:
+		buffer = io.BytesIO()
+		with zipfile.ZipFile(buffer, "w") as archive:
+			archive.writestr(
+				"manual_readbooks_roobyroo/data/game.json",
+				'{"game": "ReadBooks", "creator": "RoobyRoo"}\n',
+			)
+			archive.writestr(
+				"manual_readbooks_roobyroo/Items.py",
+				'game = "Manual"\n',
+			)
+			archive.writestr(
+				"manual_readbooks_roobyroo/ManualClient.py",
+				'game = "not set"\n',
+			)
+			archive.writestr(
+				"manual_readbooks_roobyroo/__init__.py",
+				"class ManualWorld:\n\tpass\n",
+			)
+		payload = buffer.getvalue()
+		url = (
+			"https://github.com/Virunas/apworldcollection/releases/download/"
+			"v3.0.0/manual_readbooks_roobyroo.apworld"
+		)
+		world = discover_from_release_url(url, archive_bytes=payload)
+		self.assertEqual(world.apworld_id, "manual_readbooks_roobyroo")
+		self.assertEqual(world.name, "Manual_ReadBooks_RoobyRoo")
+		self.assertEqual(world.display_name, "Manual: ReadBooks")
+		self.assertEqual(world.version, "3.0.0")
+		toml = render_discovered_toml(world)
+		self.assertIn('name = "Manual_ReadBooks_RoobyRoo"', toml)
+		self.assertIn('display_name = "Manual: ReadBooks"', toml)
+
 
 if __name__ == "__main__":
 	unittest.main()
