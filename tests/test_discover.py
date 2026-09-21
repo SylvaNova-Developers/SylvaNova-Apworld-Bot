@@ -243,6 +243,75 @@ class ArchiveDiscoveryTests(unittest.TestCase):
 		self.assertIn('name = "Manual_ReadBooks_RoobyRoo"', toml)
 		self.assertIn('display_name = "Manual: ReadBooks"', toml)
 
+	def test_ignores_test_json_fragments_that_alias_game(self) -> None:
+		"""Elden Ring 0.6.1 shipped tests with `game = manifest.get("game")` and
+		`manifest = '{"screenshot":"' + digest`, which previously resolved to `{`."""
+		buffer = io.BytesIO()
+		with zipfile.ZipFile(buffer, "w") as archive:
+			archive.writestr(
+				"eldenring/__init__.py",
+				"from .core import GreenfieldEldenRingWorld, GAME\n",
+			)
+			archive.writestr("eldenring/gamename.py", 'GAME = "Elden Ring"\n')
+			archive.writestr(
+				"eldenring/core.py",
+				"from .gamename import GAME\n\n"
+				"class GreenfieldEldenRingWorld:\n"
+				"\tgame = GAME\n",
+			)
+			archive.writestr(
+				"eldenring/archipelago.json",
+				'{"game": "Elden Ring", "world_version": "0.6.1"}\n',
+			)
+			archive.writestr(
+				"eldenring/tests/test_gf_apworld_manifest.py",
+				'game = manifest.get("game")\n',
+			)
+			archive.writestr(
+				"eldenring/tests/test_gf_evidence_ledger.py",
+				"digest = 'sha256:' + 'a' * 64\n"
+				"manifest = '{\"screenshot\":\"' + digest + '\"}'\n",
+			)
+		payload = buffer.getvalue()
+		self.assertEqual(extract_game_name(payload, "eldenring"), "Elden Ring")
+
+	def test_does_not_treat_attribute_access_as_a_constant(self) -> None:
+		buffer = io.BytesIO()
+		with zipfile.ZipFile(buffer, "w") as archive:
+			archive.writestr(
+				"demo/__init__.py",
+				"class DemoWorld:\n"
+				"\tgame = GAME_NAME\n"
+				"\tother = manifest.get('game')\n",
+			)
+			archive.writestr("demo/names.py", 'GAME_NAME = "Demo Game"\n')
+			archive.writestr(
+				"demo/helpers.py",
+				"manifest = '{\"game\":\"Nope\"}'\n"
+				"game = manifest.get(\"game\")\n",
+			)
+		payload = buffer.getvalue()
+		self.assertEqual(extract_game_name(payload, "demo"), "Demo Game")
+
+	def test_ambiguous_python_falls_back_to_manifest(self) -> None:
+		buffer = io.BytesIO()
+		with zipfile.ZipFile(buffer, "w") as archive:
+			archive.writestr("demo/__init__.py", "from .core import DemoWorld\n")
+			archive.writestr(
+				"demo/core.py",
+				'class DemoWorld:\n\tgame = "From Core"\n',
+			)
+			archive.writestr(
+				"demo/other.py",
+				'class Other:\n\tgame = "From Other"\n',
+			)
+			archive.writestr(
+				"demo/archipelago.json",
+				'{"game": "From Manifest"}\n',
+			)
+		payload = buffer.getvalue()
+		self.assertEqual(extract_game_name(payload, "demo"), "From Manifest")
+
 
 if __name__ == "__main__":
 	unittest.main()
