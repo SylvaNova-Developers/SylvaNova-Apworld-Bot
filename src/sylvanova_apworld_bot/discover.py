@@ -21,13 +21,14 @@ _RELEASE_ASSET = re.compile(
 	re.IGNORECASE,
 )
 
+# Whole-line only: `game = manifest.get("game")` and `manifest = '{"x":"' + y` must not match.
 _GAME_ASSIGNMENT = re.compile(
-	r"^\s*game\s*=\s*(?:['\"]([^'\"]+)['\"]|([A-Za-z_][A-Za-z0-9_]*))",
+	r"^\s*game\s*=\s*(?:['\"]([^'\"]+)['\"]|([A-Za-z_][A-Za-z0-9_]*))\s*(?:#.*)?$",
 	re.MULTILINE,
 )
 
 _STRING_CONST = re.compile(
-	r"^\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*['\"](?P<value>[^'\"]+)['\"]",
+	r"^\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*['\"](?P<value>[^'\"]+)['\"]\s*(?:#.*)?$",
 	re.MULTILINE,
 )
 
@@ -151,11 +152,32 @@ def extract_apworld_id(archive_bytes: bytes) -> str:
 	return validate_apworld_id(candidates[0].lower())
 
 
+def _is_test_python_path(filename: str) -> bool:
+	"""Skip shipped tests; they often contain YAML/JSON snippets that look like `game = ...`."""
+	parts = filename.replace("\\", "/").lower().split("/")
+	if any(part in {"test", "tests"} for part in parts[:-1]):
+		return True
+	name = parts[-1]
+	return name.startswith("test_") or name.endswith("_test.py")
+
+
+def _is_plausible_game_name(name: str) -> bool:
+	value = name.strip()
+	if not value:
+		return False
+	# JSON/dict fragments such as `{` from `manifest = '{"key":"' + ...`.
+	if "{" in value or "}" in value:
+		return False
+	return True
+
+
 def _build_string_constants(texts: list[str]) -> dict[str, str]:
 	constants: dict[str, str] = {}
 	for text in texts:
 		for match in _STRING_CONST.finditer(text):
-			constants[match.group("name")] = match.group("value")
+			value = match.group("value")
+			if _is_plausible_game_name(value):
+				constants[match.group("name")] = value
 	return constants
 
 
@@ -167,11 +189,14 @@ def _resolve_game_assignment(
 	for match in _GAME_ASSIGNMENT.finditer(text):
 		literal = match.group(1)
 		if literal is not None:
-			names.append(literal)
+			if _is_plausible_game_name(literal):
+				names.append(literal)
 			continue
 		identifier = match.group(2)
 		if identifier and identifier in constants:
-			names.append(constants[identifier])
+			value = constants[identifier]
+			if _is_plausible_game_name(value):
+				names.append(value)
 	return names
 
 
@@ -225,13 +250,17 @@ def extract_game_name(archive_bytes: bytes, apworld_id: str) -> str:
 		if manual_game is not None:
 			return manual_game
 
-		py_members = [
+		all_py_members = [
 			info
 			for info in archive.infolist()
 			if info.filename.endswith(".py") and not info.is_dir()
 		]
-		if not py_members:
+		if not all_py_members:
 			raise DiscoveryError("Apworld contains no Python files to discover `game = ...`.")
+
+		py_members = [
+			info for info in all_py_members if not _is_test_python_path(info.filename)
+		]
 
 		py_sources = {
 			info.filename: archive.read(info).decode("utf-8", errors="replace")
@@ -254,26 +283,28 @@ def extract_game_name(archive_bytes: bytes, apworld_id: str) -> str:
 			for name in _resolve_game_assignment(py_sources[info.filename], constants):
 				found.append((info.filename, name))
 
-		if not found:
-			manifest_game = _extract_game_from_manifest(archive, apworld_id)
-			if manifest_game is not None:
-				return manifest_game
-			raise DiscoveryError(
-				"Could not find a string `game = \"...\"` assignment in the apworld. "
-				"Ask Chou or Virunas to add it manually."
-			)
-
 		# Prefer package __init__.py hits; require a unique name among preferred files.
 		init_hits = [name for path, name in found if path.lower().endswith("/__init__.py")]
 		names = init_hits or [name for _, name in found]
 		unique = sorted(set(names))
-		if len(unique) != 1:
+		if len(unique) == 1:
+			return unique[0]
+
+		# Manifest is the AP 0.6.7+ packaged source of truth; use it when Python is
+		# missing or noisy (shipped tests, `game = manifest.get("game")`, etc.).
+		manifest_game = _extract_game_from_manifest(archive, apworld_id)
+		if manifest_game is not None:
+			return manifest_game
+		if not found:
 			raise DiscoveryError(
-				"Ambiguous `game` values in the apworld: "
-				+ ", ".join(repr(n) for n in unique)
-				+ ". Ask Chou or Virunas to add it manually."
+				"Could not find a string `game = \"...\"` assignment in the apworld. "
+				"Ask Chou or Virunas to add it manually."
 			)
-		return unique[0]
+		raise DiscoveryError(
+			"Ambiguous `game` values in the apworld: "
+			+ ", ".join(repr(n) for n in unique)
+			+ ". Ask Chou or Virunas to add it manually."
+		)
 
 
 def manual_display_name(name: str) -> str | None:
