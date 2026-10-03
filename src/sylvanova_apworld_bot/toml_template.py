@@ -149,7 +149,21 @@ def merge_discovered_version(existing: ExistingIndexWorld, world: DiscoveredWorl
 			f"Version {world.version!r} is already listed for this apworld."
 		)
 
-	name = world.name or existing.name
+	# Index `name` is the Archipelago game string used in YAMLs and by the lobby
+	# for options + validation. Silently rewriting it (e.g. "Warhammer 3" → "III")
+	# leaves existing player YAMLs unresolved and breaks make/validate until
+	# every YAML is regenerated. Game renames need a human-reviewed index PR.
+	discovered_name = (world.name or "").strip()
+	if discovered_name and discovered_name != existing.name:
+		raise TomlMergeError(
+			f"Discovered game name {discovered_name!r} does not match the "
+			f"existing index name {existing.name!r}. Renaming a game breaks "
+			"lobby YAML create/validate for existing players. Ask Chou or "
+			"Virunas to handle the rename in the index (and drop incompatible "
+			"old versions) instead of updating via Discord."
+		)
+
+	name = existing.name
 	display_name = world.display_name if world.display_name is not None else existing.display_name
 	home = world.home or existing.home
 

@@ -129,6 +129,40 @@ default_url = "https://github.com/BlastSlimey/PokemonBWAP/releases/download/{{ve
 		self.assertIn('"0.3.37" = {}', merged)
 		self.assertNotIn("Manual_", merged)
 
+	def test_rejects_game_name_rename(self) -> None:
+		"""tww3-style fork swap: same apworld id, different World.game string."""
+		existing = parse_index_world_toml(
+			"""
+name = "Total War Warhammer 3"
+home = "https://github.com/SinthorasRage/Archipelago_TWW3"
+default_url = "https://github.com/SinthorasRage/Archipelago_TWW3/releases/download/Beta_{{version}}_new_options_and_fixes/tww3.apworld"
+
+[versions]
+"0.1.5" = {}
+""".strip()
+			+ "\n"
+		)
+		world = _world(
+			apworld_id="tww3",
+			name="Total War Warhammer III",
+			version="0.10.19",
+			home="https://github.com/jordansds/Archipelago_TWW3_Alt",
+			source_url=(
+				"https://github.com/jordansds/Archipelago_TWW3_Alt/releases/download/"
+				"v0.10.19/tww3.apworld"
+			),
+			url_or_template=(
+				"https://github.com/jordansds/Archipelago_TWW3_Alt/releases/download/"
+				"v{{version}}/tww3.apworld"
+			),
+		)
+		with self.assertRaises(TomlMergeError) as ctx:
+			merge_discovered_version(existing, world)
+		message = str(ctx.exception)
+		self.assertIn("Total War Warhammer III", message)
+		self.assertIn("Total War Warhammer 3", message)
+		self.assertIn("Renaming a game", message)
+
 
 if __name__ == "__main__":
 	unittest.main()
