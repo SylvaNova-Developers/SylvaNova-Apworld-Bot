@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -130,7 +131,22 @@ def render_discovered_toml(world: DiscoveredWorld) -> str:
 	)
 
 
-def merge_discovered_version(existing: ExistingIndexWorld, world: DiscoveredWorld) -> str:
+@dataclass(frozen=True)
+class MergeResult:
+	"""Outcome of merging a discovered release into an existing index entry."""
+
+	toml_body: str
+	renamed_from: str | None = None
+	dropped_versions: tuple[str, ...] = ()
+	kept_versions: tuple[str, ...] = ()
+
+
+def merge_discovered_version(
+	existing: ExistingIndexWorld,
+	world: DiscoveredWorld,
+	*,
+	existing_version_games: Mapping[str, str | None] | None = None,
+) -> MergeResult:
 	"""Merge a newly discovered release into an existing index entry.
 
 	Manual_* siblings are unrelated index keys and never participate here — only the
@@ -138,6 +154,12 @@ def merge_discovered_version(existing: ExistingIndexWorld, world: DiscoveredWorl
 
 	When `default_url` changes, previous versions that relied on the old template are
 	pinned to explicit URLs so historical downloads keep resolving.
+
+	When the discovered `World.game` string differs from the index `name` (fork swap /
+	rename such as "Total War Warhammer 3" → "III"), the merge adopts the new name and
+	keeps only existing versions whose probed game string matches. Incompatible or
+	unreadable historical versions are dropped so the lobby does not host mixed names
+	under one index entry.
 	"""
 	if existing.supported:
 		raise TomlMergeError(
@@ -149,22 +171,38 @@ def merge_discovered_version(existing: ExistingIndexWorld, world: DiscoveredWorl
 			f"Version {world.version!r} is already listed for this apworld."
 		)
 
-	# Index `name` is the Archipelago game string used in YAMLs and by the lobby
-	# for options + validation. Silently rewriting it (e.g. "Warhammer 3" → "III")
-	# leaves existing player YAMLs unresolved and breaks make/validate until
-	# every YAML is regenerated. Game renames need a human-reviewed index PR.
 	discovered_name = (world.name or "").strip()
-	if discovered_name and discovered_name != existing.name:
-		raise TomlMergeError(
-			f"Discovered game name {discovered_name!r} does not match the "
-			f"existing index name {existing.name!r}. Renaming a game breaks "
-			"lobby YAML create/validate for existing players. Ask Chou or "
-			"Virunas to handle the rename in the index (and drop incompatible "
-			"old versions) instead of updating via Discord."
-		)
+	if not discovered_name:
+		raise TomlMergeError("Discovered apworld is missing a game name.")
 
-	name = existing.name
+	renamed_from: str | None = None
+	versions_to_keep: list[str] = list(existing.versions)
+	dropped_versions: list[str] = []
+
+	if discovered_name != existing.name:
+		renamed_from = existing.name
+		if existing_version_games is None:
+			raise TomlMergeError(
+				f"Game name changed from {existing.name!r} to {discovered_name!r}; "
+				"existing version compatibility must be probed before merging."
+			)
+		versions_to_keep = []
+		for version in existing.versions:
+			probed_name = existing_version_games.get(version)
+			if probed_name == discovered_name:
+				versions_to_keep.append(version)
+			else:
+				dropped_versions.append(version)
+
+	name = discovered_name
 	display_name = world.display_name if world.display_name is not None else existing.display_name
+	# Stale display_name that merely echoed the old game string would confuse the lobby.
+	if (
+		renamed_from is not None
+		and display_name is not None
+		and display_name.strip() == renamed_from
+	):
+		display_name = world.display_name
 	home = world.home or existing.home
 
 	effective_default = (
@@ -177,7 +215,7 @@ def merge_discovered_version(existing: ExistingIndexWorld, world: DiscoveredWorl
 	)
 
 	version_lines: list[str] = []
-	for version in existing.versions:
+	for version in versions_to_keep:
 		src = existing.versions[version]
 		if "local" in src:
 			raise TomlMergeError(
@@ -236,7 +274,12 @@ def merge_discovered_version(existing: ExistingIndexWorld, world: DiscoveredWorl
 	lines.append("[versions]")
 	lines.extend(version_lines)
 	lines.append("")
-	return "\n".join(lines)
+	return MergeResult(
+		toml_body="\n".join(lines),
+		renamed_from=renamed_from,
+		dropped_versions=tuple(dropped_versions),
+		kept_versions=tuple(versions_to_keep),
+	)
 
 
 def _escape(value: str) -> str:

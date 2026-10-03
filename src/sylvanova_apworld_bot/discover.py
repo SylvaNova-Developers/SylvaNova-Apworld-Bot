@@ -396,6 +396,32 @@ def build_url_or_template(source_url: str, version: str) -> tuple[str, bool]:
 	return source_url, False
 
 
+def probe_indexed_version_game_names(
+	version_urls: dict[str, str],
+	*,
+	apworld_id: str,
+	max_bytes: int = _DEFAULT_MAX_BYTES,
+) -> dict[str, str | None]:
+	"""Download indexed releases and return each version's discovered game name.
+
+	Failed downloads or ambiguous extraction yield ``None`` for that version so
+	callers can treat them as incompatible with a rename target.
+	"""
+	results: dict[str, str | None] = {}
+	for version, url in version_urls.items():
+		try:
+			payload = download_apworld(url, max_bytes=max_bytes)
+			try:
+				package_id = extract_apworld_id(payload)
+			except DiscoveryError:
+				package_id = apworld_id
+			results[version] = extract_game_name(payload, package_id)
+		except Exception:
+			# Fail closed: unreadable / ambiguous historical releases are dropped on rename.
+			results[version] = None
+	return results
+
+
 def discover_from_release_url(
 	url: str,
 	*,

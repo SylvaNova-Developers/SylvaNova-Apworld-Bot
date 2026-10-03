@@ -7,13 +7,20 @@ import discord
 from discord import app_commands
 
 from .config import Settings, load_settings
-from .discover import DiscoveredWorld, DiscoveryError, discover_from_release_url
+from .discover import (
+	DiscoveredWorld,
+	DiscoveryError,
+	discover_from_release_url,
+	probe_indexed_version_game_names,
+)
 from .github_pr import IndexPullRequestClient
 from .toml_template import (
+	MergeResult,
 	TomlMergeError,
 	merge_discovered_version,
 	parse_index_world_toml,
 	render_discovered_toml,
+	resolve_version_url,
 )
 
 log = logging.getLogger("sylvanova_apworld_bot")
@@ -57,6 +64,7 @@ class ConfirmRequestView(discord.ui.View):
 		github: IndexPullRequestClient,
 		requested_by: str,
 		is_update: bool,
+		merge_result: MergeResult | None = None,
 	):
 		super().__init__(timeout=_CONFIRM_TIMEOUT_SECONDS)
 		self.requester_id = requester_id
@@ -65,6 +73,7 @@ class ConfirmRequestView(discord.ui.View):
 		self.github = github
 		self.requested_by = requested_by
 		self.is_update = is_update
+		self.merge_result = merge_result
 		self.message: discord.WebhookMessage | discord.Message | None = None
 
 	async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -115,6 +124,7 @@ class ConfirmRequestView(discord.ui.View):
 				requested_by=self.requested_by,
 				world=self.world,
 				is_update=self.is_update,
+				merge_result=self.merge_result,
 			)
 		except Exception as exc:  # noqa: BLE001 - surface to Discord user
 			log.exception("confirm open_apworld_pr failed")
@@ -152,7 +162,13 @@ class ConfirmRequestView(discord.ui.View):
 		self.stop()
 
 
-def _preview_embed(world: DiscoveredWorld, toml_body: str, *, is_update: bool) -> discord.Embed:
+def _preview_embed(
+	world: DiscoveredWorld,
+	toml_body: str,
+	*,
+	is_update: bool,
+	merge_result: MergeResult | None = None,
+) -> discord.Embed:
 	url_label = "default_url" if world.uses_default_url else "url"
 	title = "Confirm apworld index update" if is_update else "Confirm apworld index PR"
 	description = (
@@ -173,6 +189,30 @@ def _preview_embed(world: DiscoveredWorld, toml_body: str, *, is_update: bool) -
 	embed.add_field(name="version", value=f"`{world.version}`", inline=True)
 	embed.add_field(name="mode", value="update existing" if is_update else "add new", inline=True)
 	embed.add_field(name="game name", value=world.name, inline=False)
+	if merge_result is not None and merge_result.renamed_from:
+		embed.add_field(
+			name="game rename detected",
+			value=(
+				f"`{merge_result.renamed_from}` → `{world.name}`\n"
+				"Existing releases were probed; only versions whose apworld still "
+				"declares the new game name are kept."
+			),
+			inline=False,
+		)
+		if merge_result.dropped_versions:
+			dropped = ", ".join(f"`{v}`" for v in merge_result.dropped_versions)
+			embed.add_field(
+				name="dropped incompatible versions",
+				value=dropped,
+				inline=False,
+			)
+		if merge_result.kept_versions:
+			kept = ", ".join(f"`{v}`" for v in merge_result.kept_versions)
+			embed.add_field(
+				name="kept compatible versions",
+				value=kept,
+				inline=False,
+			)
 	if world.display_name:
 		embed.add_field(name="display_name", value=world.display_name, inline=False)
 	embed.add_field(name="home", value=world.home, inline=False)
@@ -182,6 +222,29 @@ def _preview_embed(world: DiscoveredWorld, toml_body: str, *, is_update: bool) -
 		toml_block = toml_block[:900] + "\n..."
 	embed.add_field(name="Proposed TOML", value=f"```toml\n{toml_block}\n```", inline=False)
 	return embed
+
+
+def _probe_existing_versions_for_rename(
+	existing,
+	world: DiscoveredWorld,
+	*,
+	max_bytes: int,
+) -> dict[str, str | None]:
+	version_urls: dict[str, str] = {}
+	unresolvable: dict[str, str | None] = {}
+	for version in existing.versions:
+		url = resolve_version_url(existing, version)
+		if url:
+			version_urls[version] = url
+		else:
+			unresolvable[version] = None
+	probed = probe_indexed_version_game_names(
+		version_urls,
+		apworld_id=world.apworld_id,
+		max_bytes=max_bytes,
+	)
+	probed.update(unresolvable)
+	return probed
 
 
 def build_bot(settings: Settings) -> ApworldBot:
@@ -210,6 +273,7 @@ def build_bot(settings: Settings) -> ApworldBot:
 				world.apworld_id,
 			)
 			is_update = False
+			merge_result: MergeResult | None = None
 			if existing_file is None:
 				toml_body = render_discovered_toml(world)
 			else:
@@ -222,7 +286,20 @@ def build_bot(settings: Settings) -> ApworldBot:
 						)
 					)
 					return
-				toml_body = merge_discovered_version(existing, world)
+				existing_version_games = None
+				if world.name.strip() != existing.name:
+					existing_version_games = await asyncio.to_thread(
+						_probe_existing_versions_for_rename,
+						existing,
+						world,
+						max_bytes=bot.settings.apworld_max_bytes,
+					)
+				merge_result = merge_discovered_version(
+					existing,
+					world,
+					existing_version_games=existing_version_games,
+				)
+				toml_body = merge_result.toml_body
 				is_update = True
 
 			requested_by = interaction.user.name if interaction.user else "unknown"
@@ -233,9 +310,15 @@ def build_bot(settings: Settings) -> ApworldBot:
 				github=bot.github,
 				requested_by=requested_by,
 				is_update=is_update,
+				merge_result=merge_result,
 			)
 			message = await interaction.followup.send(
-				embed=_preview_embed(world, toml_body, is_update=is_update),
+				embed=_preview_embed(
+					world,
+					toml_body,
+					is_update=is_update,
+					merge_result=merge_result,
+				),
 				view=view,
 				wait=True,
 			)
