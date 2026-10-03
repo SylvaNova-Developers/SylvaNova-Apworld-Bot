@@ -8,6 +8,7 @@ from github.Repository import Repository
 
 if TYPE_CHECKING:
 	from .discover import DiscoveredWorld
+	from .toml_template import MergeResult
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,7 @@ class IndexPullRequestClient:
 		requested_by: str,
 		world: DiscoveredWorld | None = None,
 		is_update: bool = False,
+		merge_result: MergeResult | None = None,
 	) -> OpenedPullRequest:
 		path = f"index/{apworld}.toml"
 		exists_on_base = self._path_exists_on_base(path)
@@ -95,6 +97,7 @@ class IndexPullRequestClient:
 			requested_by=requested_by,
 			world=world,
 			is_update=is_update,
+			merge_result=merge_result,
 		)
 		pr = self._repo.create_pull(
 			title=title,
@@ -111,6 +114,7 @@ class IndexPullRequestClient:
 		requested_by: str,
 		world: DiscoveredWorld | None,
 		is_update: bool = False,
+		merge_result: MergeResult | None = None,
 	) -> str:
 		action = "update" if is_update else "request"
 		lines = [
@@ -124,6 +128,21 @@ class IndexPullRequestClient:
 				"- Note: `Manual_*` index entries are separate worlds and do not block "
 				"non-manual apworld ids."
 			)
+		if merge_result is not None and merge_result.renamed_from and world is not None:
+			lines.append(
+				f"- Game rename detected: `{merge_result.renamed_from}` → `{world.name}`"
+			)
+			lines.append(
+				"- Existing indexed releases were probed; versions whose apworld game "
+				"string does not match the new name were dropped so the lobby does not "
+				"host mixed YAML game keys under one entry."
+			)
+			if merge_result.dropped_versions:
+				dropped = ", ".join(f"`{v}`" for v in merge_result.dropped_versions)
+				lines.append(f"- Dropped incompatible versions: {dropped}")
+			if merge_result.kept_versions:
+				kept = ", ".join(f"`{v}`" for v in merge_result.kept_versions)
+				lines.append(f"- Kept compatible versions: {kept}")
 		if world is not None:
 			lines.extend(
 				[
