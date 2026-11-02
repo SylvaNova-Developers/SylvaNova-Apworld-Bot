@@ -92,10 +92,28 @@ def parse_github_release_asset_url(url: str) -> GitHubReleaseAsset:
 	)
 
 
-def download_apworld(url: str, *, max_bytes: int = _DEFAULT_MAX_BYTES) -> bytes:
+def download_apworld(
+	url: str,
+	*,
+	max_bytes: int = _DEFAULT_MAX_BYTES,
+	trusted: bool = False,
+) -> bytes:
 	parsed = urlparse(url)
-	if parsed.scheme != "https" or parsed.netloc.lower() != "github.com":
-		raise DiscoveryError("Only https://github.com/... release asset URLs are accepted.")
+	if parsed.scheme != "https" or not parsed.netloc:
+		raise DiscoveryError("Only https release asset URLs are accepted.")
+	if not trusted:
+		from .gitlab import is_gitlab_release_url, parse_gitlab_direct_download_url
+
+		is_github_asset = (
+			parsed.netloc.lower() == "github.com" and "/releases/download/" in parsed.path
+		)
+		is_gitlab_asset = (
+			parse_gitlab_direct_download_url(url) is not None or is_gitlab_release_url(url)
+		)
+		if not is_github_asset and not is_gitlab_asset:
+			raise DiscoveryError(
+				"Only direct GitHub or GitLab release `.apworld` download URLs are accepted."
+			)
 
 	request = Request(url, headers={"User-Agent": _USER_AGENT})
 	try:
@@ -410,7 +428,7 @@ def probe_indexed_version_game_names(
 	results: dict[str, str | None] = {}
 	for version, url in version_urls.items():
 		try:
-			payload = download_apworld(url, max_bytes=max_bytes)
+			payload = download_apworld(url, max_bytes=max_bytes, trusted=True)
 			try:
 				package_id = extract_apworld_id(payload)
 			except DiscoveryError:
@@ -422,24 +440,71 @@ def probe_indexed_version_game_names(
 	return results
 
 
+def resolve_release_asset_url(
+	url: str,
+	*,
+	gitlab_token: str | None = None,
+	gitlab_hosts: frozenset[str] | None = None,
+) -> tuple[str, str, str, str]:
+	"""Return (home, tag, asset_filename, download_url) for a release link."""
+	value = url.strip().split("?")[0]
+	if _RELEASE_ASSET.match(value):
+		github = parse_github_release_asset_url(url)
+		return github.home, github.tag, github.asset, github.url
+
+	from .gitlab import (
+		gitlab_hosts_from_env,
+		is_gitlab_project_url,
+		is_gitlab_release_url,
+		parse_gitlab_direct_download_url,
+		resolve_gitlab_url,
+	)
+
+	hosts = gitlab_hosts if gitlab_hosts is not None else gitlab_hosts_from_env(None)
+	if (
+		parse_gitlab_direct_download_url(url) is not None
+		or is_gitlab_release_url(url)
+		or is_gitlab_project_url(url, known_hosts=hosts)
+	):
+		gitlab = resolve_gitlab_url(url, token=gitlab_token, known_hosts=hosts)
+		return gitlab.home, gitlab.tag, gitlab.asset, gitlab.url
+
+	raise DiscoveryError(
+		"URL must be a direct GitHub release asset download ending in `.apworld` "
+		"(e.g. https://github.com/owner/repo/releases/download/tag/world.apworld), "
+		"or a GitLab project, release page, or direct "
+		"`/-/releases/<tag>/downloads/<file>.apworld` link."
+	)
+
+
 def discover_from_release_url(
 	url: str,
 	*,
 	archive_bytes: bytes | None = None,
 	max_bytes: int = _DEFAULT_MAX_BYTES,
+	gitlab_token: str | None = None,
+	gitlab_hosts: frozenset[str] | None = None,
 ) -> DiscoveredWorld:
-	asset = parse_github_release_asset_url(url)
-	payload = archive_bytes if archive_bytes is not None else download_apworld(asset.url, max_bytes=max_bytes)
+	home, tag, asset_name, source_url = resolve_release_asset_url(
+		url,
+		gitlab_token=gitlab_token,
+		gitlab_hosts=gitlab_hosts,
+	)
+	payload = (
+		archive_bytes
+		if archive_bytes is not None
+		else download_apworld(source_url, max_bytes=max_bytes, trusted=True)
+	)
 	apworld_id = extract_apworld_id(payload)
 	name = extract_game_name(payload, apworld_id)
-	version = derive_version(tag=asset.tag, asset=asset.asset, apworld_id=apworld_id)
-	url_or_template, uses_default_url = build_url_or_template(asset.url, version)
+	version = derive_version(tag=tag, asset=asset_name, apworld_id=apworld_id)
+	url_or_template, uses_default_url = build_url_or_template(source_url, version)
 	return DiscoveredWorld(
 		apworld_id=apworld_id,
 		name=name,
 		version=version,
-		home=asset.home,
-		source_url=asset.url,
+		home=home,
+		source_url=source_url,
 		url_or_template=url_or_template,
 		display_name=manual_display_name(name),
 		uses_default_url=uses_default_url,

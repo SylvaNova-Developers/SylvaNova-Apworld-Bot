@@ -252,10 +252,12 @@ def build_bot(settings: Settings) -> ApworldBot:
 
 	@bot.tree.command(
 		name="request-apworld",
-		description="Submit a GitHub release .apworld link to open an index PR",
+		description="Submit a GitHub or GitLab release .apworld link to open an index PR",
 	)
 	@app_commands.describe(
-		url="Direct GitHub release asset URL ending in .apworld",
+		url=(
+			"GitHub release asset URL, or GitLab project / release / direct .apworld download link"
+		),
 	)
 	async def request_apworld(
 		interaction: discord.Interaction,
@@ -267,6 +269,8 @@ def build_bot(settings: Settings) -> ApworldBot:
 				discover_from_release_url,
 				url.strip(),
 				max_bytes=bot.settings.apworld_max_bytes,
+				gitlab_token=bot.settings.gitlab_token,
+				gitlab_hosts=bot.settings.gitlab_hosts,
 			)
 			existing_file = await asyncio.to_thread(
 				bot.github.get_apworld_toml,

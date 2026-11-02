@@ -1,6 +1,6 @@
 # SylvaNova apworld request bot
 
-Discord bot that turns a **GitHub release `.apworld` download link** into an add-only
+Discord bot that turns a **GitHub or GitLab release `.apworld` link** into an add-only
 PR on [`SylvaNova-Developers/SylvaNova-Archipelago-Index`](https://github.com/SylvaNova-Developers/SylvaNova-Archipelago-Index).
 
 Fuzz / validate / auto-merge stay in the index repo's `PR CI` workflow; this bot
@@ -12,11 +12,26 @@ Slash command `/request-apworld`:
 
 | Option | Required | Meaning |
 |--------|----------|---------|
-| `url` | yes | Direct GitHub release asset URL ending in `.apworld` |
+| `url` | yes | GitHub or GitLab link to a release `.apworld` (see below) |
 
-Example:
+**GitHub** (unchanged): direct release asset download only, for example:
 
 `https://github.com/owner/repo/releases/download/1.2.3/world.apworld`
+
+**GitLab** ([gitlab.com](https://gitlab.com) and self-hosted instances listed in `GITLAB_HOSTS`):
+
+| Form | Example |
+|------|---------|
+| Direct download | `https://gitlab.com/group/project/-/releases/1.2.3/downloads/world.apworld` |
+| Release page / tag | `https://gitlab.com/group/project/-/releases/1.2.3` |
+| Project (latest release) | `https://gitlab.com/group/project` |
+
+GitLab release pages and project URLs are resolved via the GitLab REST API (v4). The
+release must include exactly one `.apworld` link asset (or use a direct download link).
+Set optional `GITLAB_TOKEN` for private projects or higher rate limits.
+
+Index entries store `home`, `default_url`, and per-version URLs as plain HTTPS strings;
+GitLab project URLs work the same way as GitHub repo URLs.
 
 Flow:
 
@@ -29,8 +44,6 @@ Flow:
 3. Otherwise it shows an **add** preview (metadata + proposed TOML).
 4. On Confirm, it opens an add or update PR. Index CI validates, fuzzes, and
    auto-merges when green.
-
-Only direct release **asset** links are accepted (not the release page URL).
 
 ## Split into its own repo (optional)
 
@@ -47,6 +60,7 @@ gh repo create SylvaNova-Developers/SylvaNova-Apworld-Bot --public --source=disc
 ```bash
 cp .env.example .env
 # fill DISCORD_TOKEN, DISCORD_GUILD_ID, GITHUB_TOKEN
+# optional: GITLAB_TOKEN, GITLAB_HOSTS for self-hosted GitLab
 ```
 
 Create a Discord application → Bot → enable `applications.commands`, invite the
@@ -104,4 +118,5 @@ PYTHONPATH=src python -m unittest discover -s tests -v
 
 ## Env
 
-See [`.env.example`](.env.example). Optional: `APWORLD_MAX_BYTES` (default 52428800).
+See [`.env.example`](.env.example). Optional: `APWORLD_MAX_BYTES` (default 52428800),
+`GITLAB_TOKEN`, `GITLAB_HOSTS`.
