@@ -170,6 +170,39 @@ def extract_apworld_id(archive_bytes: bytes) -> str:
 	return validate_apworld_id(candidates[0].lower())
 
 
+def _package_member_path(
+	archive: zipfile.ZipFile,
+	apworld_id: str,
+	relative_path: str,
+) -> str | None:
+	"""Resolve a file inside the apworld package; zip member names may use mixed case."""
+	suffix = "/" + relative_path.replace("\\", "/").lstrip("/")
+	suffix_lower = suffix.lower()
+	package_lower = apworld_id.lower()
+	for name in archive.namelist():
+		normalized = name.replace("\\", "/")
+		if not normalized.lower().endswith(suffix_lower):
+			continue
+		root = normalized.split("/", 1)[0]
+		if root.lower() == package_lower:
+			return normalized
+	return None
+
+
+def _read_package_member(
+	archive: zipfile.ZipFile,
+	apworld_id: str,
+	relative_path: str,
+) -> bytes | None:
+	member = _package_member_path(archive, apworld_id, relative_path)
+	if member is None:
+		return None
+	try:
+		return archive.read(member)
+	except KeyError:
+		return None
+
+
 def _is_test_python_path(filename: str) -> bool:
 	"""Skip shipped tests; they often contain YAML/JSON snippets that look like `game = ...`."""
 	parts = filename.replace("\\", "/").lower().split("/")
@@ -219,10 +252,8 @@ def _resolve_game_assignment(
 
 
 def _extract_game_from_manifest(archive: zipfile.ZipFile, apworld_id: str) -> str | None:
-	manifest_path = f"{apworld_id}/archipelago.json"
-	try:
-		raw = archive.read(manifest_path)
-	except KeyError:
+	raw = _read_package_member(archive, apworld_id, "archipelago.json")
+	if raw is None:
 		return None
 	try:
 		data = json.loads(raw.decode("utf-8"))
@@ -236,10 +267,8 @@ def _extract_game_from_manifest(archive: zipfile.ZipFile, apworld_id: str) -> st
 
 def _extract_game_from_manual_data(archive: zipfile.ZipFile, apworld_id: str) -> str | None:
 	"""Build Manual_{game}_{author} from ManualForArchipelago data/game.json."""
-	manual_path = f"{apworld_id}/data/game.json"
-	try:
-		raw = archive.read(manual_path)
-	except KeyError:
+	raw = _read_package_member(archive, apworld_id, "data/game.json")
+	if raw is None:
 		return None
 	try:
 		data = json.loads(raw.decode("utf-8"))
