@@ -177,6 +177,36 @@ class ArchiveDiscoveryTests(unittest.TestCase):
 		payload = buffer.getvalue()
 		self.assertEqual(extract_game_name(payload, "demo"), "Demo From Manifest")
 
+	def test_manual_data_game_json_mixed_case_package_dir(self) -> None:
+		"""Package folder casing in the zip may differ from lowercased apworld_id."""
+		buffer = io.BytesIO()
+		with zipfile.ZipFile(buffer, "w") as archive:
+			archive.writestr(
+				"manual_PLA_miro/data/game.json",
+				'{"game": "PLA", "creator": "Miro"}\n',
+			)
+			archive.writestr(
+				"manual_PLA_miro/Game.py",
+				'game_name = "Manual_%s_%s" % (game_table["game"], game_table["creator"])\n',
+			)
+			archive.writestr(
+				"manual_PLA_miro/__init__.py",
+				"class ManualWorld:\n\tgame = game_name\n",
+			)
+		payload = buffer.getvalue()
+		apworld_id = extract_apworld_id(payload)
+		self.assertEqual(apworld_id, "manual_pla_miro")
+		self.assertEqual(extract_game_name(payload, apworld_id), "Manual_PLA_Miro")
+
+	def test_manual_pla_miro_fixture_archive(self) -> None:
+		from pathlib import Path
+
+		fixture = Path(__file__).resolve().parent / "fixtures" / "manual_PLA_miro_minimal.apworld"
+		payload = fixture.read_bytes()
+		apworld_id = extract_apworld_id(payload)
+		self.assertEqual(apworld_id, "manual_pla_miro")
+		self.assertEqual(extract_game_name(payload, apworld_id), "Manual_PLA_Miro")
+
 	def test_manual_data_game_json_overrides_placeholders(self) -> None:
 		buffer = io.BytesIO()
 		with zipfile.ZipFile(buffer, "w") as archive:
